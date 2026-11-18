@@ -17,6 +17,15 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies into the package
+        run: pip install -r requirements.txt --target=".python_packages/lib/site-packages"
+
+
       - name: Login to Azure
         uses: azure/login@v2
         with:
@@ -29,4 +38,3 @@ jobs:
         with:
           app-name: 'fnapp001'
           package: '.'
-          remote-build: true
