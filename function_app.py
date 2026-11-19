@@ -1,6 +1,7 @@
 import logging
 import re
-
+from rag import answer
+import json
 import azure.functions as func
 
 from ingest import delete_blob, upsert_blob
@@ -32,3 +33,26 @@ def api_catalog_blob_events(event: func.EventGridEvent):
         logging.info('DELETE: api=%s version=%s file=%s chunks_removed=%d', api, version, file, count)
     else:
         logging.info('Unhandled event type %s', event.event_type)
+
+
+def _reply(payload, status):
+    return func.HttpResponse(json.dumps(payload), status_code=status, mimetype='application/json')
+
+
+@app.route(route='ask', methods=['POST'], auth_level=func.AuthLevel.FUNCTION)
+def ask(req: func.HttpRequest) -> func.HttpResponse:
+    try:
+        body = req.get_json()
+    except ValueError:
+        body = {}
+    if not isinstance(body, dict):
+        body = {}
+    question = (body.get('question') or '').strip()
+    if not question:
+        return _reply({'error': 'Send JSON like {"question": "..."}'}, 400)
+    try:
+        result = answer(question, body.get('apiname'), body.get('business_domain'))
+    except Exception:
+        logging.exception('ask failed')
+        return _reply({'error': 'The answer service failed. Try again.'}, 500)
+    return _reply(result, 200)
