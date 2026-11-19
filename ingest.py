@@ -32,7 +32,7 @@ def _search():
     return SearchClient(
         endpoint=os.environ['AZURE_SEARCH_ENDPOINT'],
         index_name=os.environ.get('AZURE_SEARCH_INDEX', 'apicatalog-index'),
-        credential=AzureKeyCredential(os.environ['AZURE_SEARCH_KEY']),
+        credential=AzureKeyCredential(os.environ['AZURE_SEARCH_API_KEY']),
     )
 
 
@@ -40,7 +40,7 @@ def _search():
 def _openai():
     return AzureOpenAI(
         azure_endpoint=os.environ['AZURE_OPENAI_ENDPOINT'],
-        api_key=os.environ['AZURE_OPENAI_KEY'],
+        api_key=os.environ['AZURE_OPENAI_API_KEY'],
         api_version=os.environ.get('AZURE_OPENAI_API_VERSION', '2024-10-21'),
     )
 
