@@ -1,4 +1,5 @@
 import os
+import time
 
 from azure.search.documents.models import VectorizedQuery
 
@@ -31,6 +32,7 @@ def _filter(apiname, business_domain):
 
 
 def answer(question, apiname=None, business_domain=None, top=6):
+    started = time.time()
     vector = _embed([question])[0]
     hits = list(_search().search(
         search_text=question,
@@ -53,10 +55,18 @@ def answer(question, apiname=None, business_domain=None, top=6):
             {'role': 'user', 'content': user_message},
         ],
     )
+    usage = resp.usage
     return {
         'answer': resp.choices[0].message.content,
         'sources': [
             {'n': i, 'apiname': h['apiname'], 'version': h['version'], 'fileName': h['fileName'], 'title': h['title']}
             for i, h in enumerate(hits, 1)
         ],
+        'stats': {
+            'hits': len(hits),
+            'top_reranker': hits[0].get('@search.reranker_score') if hits else None,
+            'prompt_tokens': usage.prompt_tokens if usage else None,
+            'completion_tokens': usage.completion_tokens if usage else None,
+            'latency_ms': int((time.time() - started) * 1000),
+        },
     }

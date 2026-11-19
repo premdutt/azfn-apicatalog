@@ -1,10 +1,12 @@
+import hashlib
+import json
 import logging
 import re
-from rag import answer
-import json
+
 import azure.functions as func
 
 from ingest import delete_blob, upsert_blob
+from rag import answer
 
 app = func.FunctionApp()
 
@@ -12,6 +14,23 @@ SUBJECT_RE = re.compile(r'^/blobServices/default/containers/(?P<container>[^/]+)
 PATH_RE = re.compile(
     r'^apis/(?P<api>[^/]+)/(?P<version>v\d+)/(?P<file>apidoc\.md|apimetadata\.json|apispec\.yaml)$'
 )
+
+
+def _user_id(req):
+    raw = req.headers.get('x-ms-client-principal-name') or req.headers.get('x-forwarded-for') or 'anonymous'
+    return hashlib.sha256(raw.encode()).hexdigest()[:12]
+
+
+def _reply(payload, status):
+    return func.HttpResponse(json.dumps(payload), status_code=status, mimetype='application/json')
+
+
+def _json_body(req):
+    try:
+        body = req.get_json()
+    except ValueError:
+        return {}
+    return body if isinstance(body, dict) else {}
 
 
 @app.event_grid_trigger(arg_name='event')
@@ -35,18 +54,9 @@ def api_catalog_blob_events(event: func.EventGridEvent):
         logging.info('Unhandled event type %s', event.event_type)
 
 
-def _reply(payload, status):
-    return func.HttpResponse(json.dumps(payload), status_code=status, mimetype='application/json')
-
-
 @app.route(route='ask', methods=['POST'], auth_level=func.AuthLevel.FUNCTION)
 def ask(req: func.HttpRequest) -> func.HttpResponse:
-    try:
-        body = req.get_json()
-    except ValueError:
-        body = {}
-    if not isinstance(body, dict):
-        body = {}
+    body = _json_body(req)
     question = (body.get('question') or '').strip()
     if not question:
         return _reply({'error': 'Send JSON like {"question": "..."}'}, 400)
@@ -55,4 +65,23 @@ def ask(req: func.HttpRequest) -> func.HttpResponse:
     except Exception:
         logging.exception('ask failed')
         return _reply({'error': 'The answer service failed. Try again.'}, 500)
+
+    stats = result.pop('stats')
+    logging.info('ASK_EVENT %s', json.dumps({
+        'user': _user_id(req),
+        'q_len': len(question),
+        'apiname': body.get('apiname'),
+        **stats,
+    }))
     return _reply(result, 200)
+
+
+@app.route(route='feedback', methods=['POST'], auth_level=func.AuthLevel.FUNCTION)
+def feedback(req: func.HttpRequest) -> func.HttpResponse:
+    body = _json_body(req)
+    logging.info('FEEDBACK_EVENT %s', json.dumps({
+        'user': _user_id(req),
+        'helpful': bool(body.get('helpful')),
+        'comment_len': len(body.get('comment') or ''),
+    }))
+    return _reply({'ok': True}, 200)
