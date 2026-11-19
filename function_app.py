@@ -11,7 +11,12 @@ from rag import answer
 
 app = func.FunctionApp()
 
-CHAT_HTML = (Path(__file__).parent / 'chat.html').read_text(encoding='utf-8')
+_chat_file = Path(__file__).parent / 'chat.html'
+CHAT_HTML = (
+    _chat_file.read_text(encoding='utf-8')
+    if _chat_file.exists()
+    else '<p>Chat page not deployed.</p>'
+)
 
 SUBJECT_RE = re.compile(r'^/blobServices/default/containers/(?P<container>[^/]+)/blobs/(?P<blob>.+)$')
 PATH_RE = re.compile(
@@ -66,4 +71,34 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
     return func.HttpResponse(CHAT_HTML, mimetype='text/html')
 
 
-@app.route(route='ask', methods=['POST'],
+@app.route(route='ask', methods=['POST'], auth_level=func.AuthLevel.ANONYMOUS)
+def ask(req: func.HttpRequest) -> func.HttpResponse:
+    if not _caller(req):
+        return _reply({'error': 'Sign in required'}, 401)
+    body = _json_body(req)
+    question = (body.get('question') or '').strip()
+    if not question:
+        return _reply({'error': 'Send JSON like {"question": "..."}'}, 400)
+    if len(question) > 2000:
+        return _reply({'error': 'Question is too long'}, 400)
+    try:
+        result = answer(question, body.get('apiname'), body.get('business_domain'))
+    except Exception:
+        logging.exception('ask failed')
+        return _reply({'error': 'The answer service failed. Try again.'}, 500)
+    stats = result.pop('stats', {})
+    logging.info('ASK_EVENT %s', json.dumps({
+        'user': _user_id(req), 'q_len': len(question),
+        'apiname': body.get('apiname'), **stats}))
+    return _reply(result, 200)
+
+
+@app.route(route='feedback', methods=['POST'], auth_level=func.AuthLevel.ANONYMOUS)
+def feedback(req: func.HttpRequest) -> func.HttpResponse:
+    if not _caller(req):
+        return _reply({'error': 'Sign in required'}, 401)
+    body = _json_body(req)
+    logging.info('FEEDBACK_EVENT %s', json.dumps({
+        'user': _user_id(req), 'helpful': bool(body.get('helpful')),
+        'comment_len': len(body.get('comment') or '')}))
+    return _reply({'ok': True}, 200)
