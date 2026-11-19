@@ -49,7 +49,7 @@ def _embed(texts):
     vectors = []
     for i in range(0, len(texts), 16):
         resp = _openai().embeddings.create(
-            model=os.environ['AZURE_OPENAI_EMBED_DEPLOYMENT'], input=texts[i:i + 16]
+            model=os.environ['AZURE_OPENAI_EMBEDDING_DEPLOYMENT'], input=texts[i:i + 16]
         )
         vectors.extend(item.embedding for item in resp.data)
     return vectors
