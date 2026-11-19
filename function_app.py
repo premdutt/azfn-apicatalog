@@ -2,6 +2,7 @@ import hashlib
 import json
 import logging
 import re
+from pathlib import Path
 
 import azure.functions as func
 
@@ -10,15 +11,12 @@ from rag import answer
 
 app = func.FunctionApp()
 
+CHAT_HTML = (Path(__file__).parent / 'chat.html').read_text(encoding='utf-8')
+
 SUBJECT_RE = re.compile(r'^/blobServices/default/containers/(?P<container>[^/]+)/blobs/(?P<blob>.+)$')
 PATH_RE = re.compile(
     r'^apis/(?P<api>[^/]+)/(?P<version>v\d+)/(?P<file>apidoc\.md|apimetadata\.json|apispec\.yaml)$'
 )
-
-
-def _user_id(req):
-    raw = req.headers.get('x-ms-client-principal-name') or req.headers.get('x-forwarded-for') or 'anonymous'
-    return hashlib.sha256(raw.encode()).hexdigest()[:12]
 
 
 def _reply(payload, status):
@@ -31,6 +29,15 @@ def _json_body(req):
     except ValueError:
         return {}
     return body if isinstance(body, dict) else {}
+
+
+def _caller(req):
+    return req.headers.get('x-ms-client-principal-name')
+
+
+def _user_id(req):
+    raw = _caller(req) or req.headers.get('x-forwarded-for') or 'anon'
+    return hashlib.sha256(raw.encode()).hexdigest()[:12]
 
 
 @app.event_grid_trigger(arg_name='event')
@@ -54,34 +61,9 @@ def api_catalog_blob_events(event: func.EventGridEvent):
         logging.info('Unhandled event type %s', event.event_type)
 
 
-@app.route(route='ask', methods=['POST'], auth_level=func.AuthLevel.FUNCTION)
-def ask(req: func.HttpRequest) -> func.HttpResponse:
-    body = _json_body(req)
-    question = (body.get('question') or '').strip()
-    if not question:
-        return _reply({'error': 'Send JSON like {"question": "..."}'}, 400)
-    try:
-        result = answer(question, body.get('apiname'), body.get('business_domain'))
-    except Exception:
-        logging.exception('ask failed')
-        return _reply({'error': 'The answer service failed. Try again.'}, 500)
-
-    stats = result.pop('stats')
-    logging.info('ASK_EVENT %s', json.dumps({
-        'user': _user_id(req),
-        'q_len': len(question),
-        'apiname': body.get('apiname'),
-        **stats,
-    }))
-    return _reply(result, 200)
+@app.route(route='chat', methods=['GET'], auth_level=func.AuthLevel.ANONYMOUS)
+def chat(req: func.HttpRequest) -> func.HttpResponse:
+    return func.HttpResponse(CHAT_HTML, mimetype='text/html')
 
 
-@app.route(route='feedback', methods=['POST'], auth_level=func.AuthLevel.FUNCTION)
-def feedback(req: func.HttpRequest) -> func.HttpResponse:
-    body = _json_body(req)
-    logging.info('FEEDBACK_EVENT %s', json.dumps({
-        'user': _user_id(req),
-        'helpful': bool(body.get('helpful')),
-        'comment_len': len(body.get('comment') or ''),
-    }))
-    return _reply({'ok': True}, 200)
+@app.route(route='ask', methods=['POST'],
